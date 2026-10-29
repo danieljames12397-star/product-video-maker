@@ -132,7 +132,7 @@ def main():
     ap.add_argument("--caption", required=True)
     ap.add_argument("--out", default="video.mp4")
     a = ap.parse_args()
-    srcs = [s.strip() for s in a.images.split(",") if s.strip()][:7]
+    srcs = [s.strip() for s in re.split(r"[\s|]+|,(?=https?://)", a.images) if s.strip()][:7]
     os.makedirs("work", exist_ok=True)
     frames = []
     for i, s in enumerate(srcs):
