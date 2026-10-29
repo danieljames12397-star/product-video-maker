@@ -3,3 +3,4 @@ work/
 *.onnx.json
 voice.txt
 video.mp4
+jobs/manual.json

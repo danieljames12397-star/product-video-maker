@@ -125,38 +125,100 @@ def music(dur, out_wav, sr=48000):
         f.writeframes((st*32767).astype("<i2").tobytes())
 
 
+def overlay_png(hook, out):
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rounded_rectangle((90, 1700, W - 90, 1800), 18, fill=(190, 165, 120, 235))
+    f = font(44); tw = d.textlength(SHOP, font=f)
+    d.text(((W - tw) / 2, 1722), SHOP, font=f, fill=(255, 255, 255))
+    if hook:
+        lines = textwrap.wrap(hook, 24)[:4]; fh = font(58); bh = 40 + 76 * len(lines)
+        d.rounded_rectangle((70, 90, W - 70, 90 + bh), 28, fill=(255, 255, 255, 225))
+        for k, ln in enumerate(lines):
+            lw = d.textlength(ln, font=fh)
+            d.text(((W - lw) / 2, 112 + 76 * k), ln, font=fh, fill=(60, 45, 40))
+    img.save(out)
+
+
+def get_clip(src, dst):
+    m = re.search(r"drive\.google\.com.*?(?:id=|/d/)([\w-]+)", src)
+    if m:
+        sh([sys.executable, "-m", "gdown", "--id", m.group(1), "-O", dst])
+    elif os.path.exists(src):
+        subprocess.run(["cp", src, dst], check=True)
+    else:
+        req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=120) as r, open(dst, "wb") as f:
+            f.write(r.read())
+
+
+def probe_dur(p):
+    o = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", p], capture_output=True, text=True, check=True)
+    return float(o.stdout.strip())
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--images", required=True, help="comma-separated URLs or paths")
-    ap.add_argument("--hook", required=True)
-    ap.add_argument("--caption", required=True)
+    ap.add_argument("--images", default="", help="URLs or paths separated by space/newline/|")
+    ap.add_argument("--hook", default="")
+    ap.add_argument("--caption", default="")
+    ap.add_argument("--clip", default="", help="optional product video URL / Drive link")
+    ap.add_argument("--job", default="", help="JSON file with images/hook/caption/clip")
     ap.add_argument("--out", default="video.mp4")
     a = ap.parse_args()
-    srcs = [s.strip() for s in re.split(r"[\s|]+|,(?=https?://)", a.images) if s.strip()][:7]
+    if a.job:
+        import json
+        j = json.load(open(a.job))
+        a.images = j.get("images", a.images); a.hook = j.get("hook", a.hook)
+        a.caption = j.get("caption", a.caption); a.clip = j.get("clip", a.clip)
+    imgs = a.images if isinstance(a.images, list) else re.split(r"[\s|]+|,(?=https?://)", a.images)
+    srcs = [s.strip() for s in imgs if s.strip()][:7]
     os.makedirs("work", exist_ok=True)
+    has_clip = bool(a.clip.strip())
     frames = []
     for i, s in enumerate(srcs):
         raw = f"work/raw{i}.jpg"; fr = f"work/f{i}.png"
-        fetch(s, raw); make_frame(raw, fr, a.hook if i == 0 else None); frames.append(fr)
-    n = len(frames)
+        fetch(s, raw); make_frame(raw, fr, a.hook if (i == 0 and not has_clip) else None); frames.append(fr)
+    cd = 0
+    if has_clip:
+        get_clip(a.clip.strip(), "work/clip_raw.mp4")
+        cd = min(probe_dur("work/clip_raw.mp4"), 9.0)
+        overlay_png(a.hook, "work/ov.png")
+    npho = len(frames); N = npho + (1 if has_clip else 0)
     tts(voice_text(a.hook, a.caption), "work/vo.wav")
     vlen = wav_len("work/vo.wav")
-    total = max(vlen + 2.5, n * 3.2)
     xf = 0.9
-    seg = (total + xf * (n - 1)) / n
+    total = max(vlen + 2.5, cd + npho * 3.0 - xf * (N - 1) + 0.5, N * 3.2 - xf * (N - 1))
+    seg = (total - cd + xf * (N - 1)) / max(npho, 1) if npho else 0
     music(total + .5, "work/bg.wav")
     cmd = ["ffmpeg", "-y", "-v", "error"]
-    for fr in frames: cmd += ["-loop", "1", "-t", f"{seg:.3f}", "-i", fr]
+    durs = []
+    if has_clip:
+        cmd += ["-t", f"{cd:.3f}", "-i", "work/clip_raw.mp4", "-loop", "1", "-t", f"{cd:.3f}", "-i", "work/ov.png"]
+        durs.append(cd)
+    for fr in frames:
+        cmd += ["-loop", "1", "-t", f"{seg:.3f}", "-i", fr]; durs.append(seg)
     cmd += ["-i", "work/vo.wav", "-i", "work/bg.wav"]
-    fc = "".join(f"[{i}:v]fps=30,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{i}];" for i in range(n))
-    prev = "v0"
-    for i in range(1, n):
-        off = i * (seg - xf)
-        fc += f"[{prev}][v{i}]xfade=transition=fade:duration={xf}:offset={off:.3f}[x{i}];"
-        prev = f"x{i}"
-    if n == 1: prev = "v0"
-    fc += (f"[{n}:a]adelay=800|800,aformat=sample_rates=48000:channel_layouts=stereo,asplit[vo][sc];"
-           f"[{n+1}:a]volume=.55[bg];[bg][sc]sidechaincompress=threshold=.03:ratio=8:attack=20:release=400[duck];"
+    ai = (2 if has_clip else 0) + npho
+    fc = ""; labels = []; k = 0
+    if has_clip:
+        fc += (f"[0:v]fps=30,setpts=PTS-STARTPTS,split[c1][c2];"
+               f"[c1]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=40:5[cb];"
+               f"[c2]scale={W}:1100:force_original_aspect_ratio=decrease[cf];"
+               f"[cb][cf]overlay=(W-w)/2:420+(1100-h)/2[cm];"
+               f"[1:v]format=rgba[ov];[cm][ov]overlay=0:0,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v0];")
+        labels.append("v0"); k = 2
+    for i in range(npho):
+        j = len(labels)
+        fc += f"[{k+i}:v]fps=30,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{j}];"; labels.append(f"v{j}")
+    prev = labels[0]; acc = durs[0]
+    for i in range(1, len(labels)):
+        off = acc - xf
+        fc += f"[{prev}][{labels[i]}]xfade=transition=fade:duration={xf}:offset={off:.3f}[x{i}];"
+        prev = f"x{i}"; acc = acc - xf + durs[i]
+    fc += (f"[{ai}:a]adelay=800|800,aformat=sample_rates=48000:channel_layouts=stereo,asplit[vo][sc];"
+           f"[{ai+1}:a]volume=.55[bg];[bg][sc]sidechaincompress=threshold=.03:ratio=8:attack=20:release=400[duck];"
            f"[vo][duck]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,"
            f"atrim=0:{total:.3f}[a]")
     cmd += ["-filter_complex", fc, "-map", f"[{prev}]", "-map", "[a]", "-t", f"{total:.3f}",

@@ -6,7 +6,7 @@ on:
         description: "Product id (used for the release tag)"
         required: true
       images:
-        description: "Comma-separated photo URLs"
+        description: "Photo URLs (space or | separated)"
         required: true
       hook:
         description: "Hook line (English)"
@@ -14,6 +14,12 @@ on:
       caption:
         description: "Caption (English)"
         required: true
+      clip:
+        description: "Optional product video URL (Drive link)"
+        required: false
+  push:
+    paths:
+      - "jobs/*.json"
 permissions:
   contents: write
 jobs:
@@ -21,19 +27,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install tools
         run: |
           sudo apt-get update -y && sudo apt-get install -y ffmpeg fonts-dejavu-core
-          pip install piper-tts==1.8.0 pillow numpy
-      - name: Build video
+          pip install piper-tts==1.8.0 pillow numpy gdown
+      - name: Prepare job
+        id: job
         env:
+          PID_IN: ${{ inputs.pid }}
           IMAGES: ${{ inputs.images }}
           HOOK: ${{ inputs.hook }}
           CAPTION: ${{ inputs.caption }}
-        run: python scripts/make_video.py --images "$IMAGES" --hook "$HOOK" --caption "$CAPTION" --out video.mp4 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+          CLIP: ${{ inputs.clip }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            F=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'jobs/*.json' | head -1)
+            echo "file=$F" >> "$GITHUB_OUTPUT"
+            echo "pid=$(basename "$F" .json)" >> "$GITHUB_OUTPUT"
+          else
+            python - <<'PY'
+          import json, os
+          json.dump({"images": os.environ["IMAGES"], "hook": os.environ["HOOK"],
+                     "caption": os.environ["CAPTION"], "clip": os.environ.get("CLIP", "")},
+                    open("jobs/manual.json", "w"))
+          PY
+            echo "file=jobs/manual.json" >> "$GITHUB_OUTPUT"
+            echo "pid=$PID_IN" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build video
+        run: python scripts/make_video.py --job "${{ steps.job.outputs.file }}" --out video.mp4 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
       - name: Save log on failure
         if: failure()
         env:
@@ -44,7 +71,7 @@ jobs:
       - name: Publish to a release
         env:
           GH_TOKEN: ${{ github.token }}
-          PID: ${{ inputs.pid }}
+          PID: ${{ steps.job.outputs.pid }}
         run: |
           TAG="p-${PID}"
           gh release delete "$TAG" --yes --cleanup-tag || true
