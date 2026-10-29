@@ -143,7 +143,11 @@ def overlay_png(hook, out):
 def get_clip(src, dst):
     m = re.search(r"drive\.google\.com.*?(?:id=|/d/)([\w-]+)", src)
     if m:
-        sh([sys.executable, "-m", "gdown", "--id", m.group(1), "-O", dst])
+        fid = m.group(1)
+        ok = subprocess.run(["gdown", f"https://drive.google.com/uc?id={fid}", "-O", dst]).returncode == 0
+        if not ok or not os.path.exists(dst) or os.path.getsize(dst) < 20000:
+            sh(["curl", "-fL", "-o", dst,
+                f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t"])
     elif os.path.exists(src):
         subprocess.run(["cp", src, dst], check=True)
     else:
