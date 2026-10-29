@@ -1,0 +1,45 @@
+name: Make product video
+on:
+  workflow_dispatch:
+    inputs:
+      pid:
+        description: "Product id (used for the release tag)"
+        required: true
+      images:
+        description: "Comma-separated photo URLs"
+        required: true
+      hook:
+        description: "Hook line (English)"
+        required: true
+      caption:
+        description: "Caption (English)"
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y ffmpeg fonts-dejavu-core
+          pip install piper-tts==1.8.0 pillow numpy
+      - name: Build video
+        env:
+          IMAGES: ${{ inputs.images }}
+          HOOK: ${{ inputs.hook }}
+          CAPTION: ${{ inputs.caption }}
+        run: python scripts/make_video.py --images "$IMAGES" --hook "$HOOK" --caption "$CAPTION" --out video.mp4
+      - name: Publish to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PID: ${{ inputs.pid }}
+        run: |
+          TAG="p-${PID}"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" video.mp4 --title "Video $PID" --notes "Auto-built product video"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/video.mp4"
