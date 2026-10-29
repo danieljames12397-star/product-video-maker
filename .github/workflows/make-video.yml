@@ -48,7 +48,7 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             F=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'jobs/*.json' | head -1)
             echo "file=$F" >> "$GITHUB_OUTPUT"
-            echo "pid=$(basename "$F" .json)" >> "$GITHUB_OUTPUT"
+            echo "pid=$(basename "$F" .json | sed "s/^sq-//")" >> "$GITHUB_OUTPUT"
           else
             python - <<'PY'
           import json, os
@@ -59,8 +59,15 @@ jobs:
             echo "file=jobs/manual.json" >> "$GITHUB_OUTPUT"
             echo "pid=$PID_IN" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build video
-        run: python scripts/make_video.py --job "${{ steps.job.outputs.file }}" --out video.mp4 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+      - name: Build
+        run: |
+          MODE=$(python -c "import json;print(json.load(open('${{ steps.job.outputs.file }}')).get('mode','video'))")
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+          if [ "$MODE" = "squares" ]; then
+            python scripts/make_squares.py --job "${{ steps.job.outputs.file }}" 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+          else
+            python scripts/make_video.py --job "${{ steps.job.outputs.file }}" --out video.mp4 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+          fi
       - name: Save log on failure
         if: failure()
         env:
@@ -73,7 +80,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PID: ${{ steps.job.outputs.pid }}
         run: |
-          TAG="p-${PID}"
-          gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" video.mp4 --title "Video $PID" --notes "Auto-built product video"
+          if [ "$MODE" = "squares" ]; then
+            TAG="sq-${PID}"
+            gh release delete "$TAG" --yes --cleanup-tag || true
+            gh release create "$TAG" sq/*.jpg --title "Squares $PID" --notes "Square product photos"
+          else
+            TAG="p-${PID}"
+            gh release delete "$TAG" --yes --cleanup-tag || true
+            gh release create "$TAG" video.mp4 --title "Video $PID" --notes "Auto-built product video"
+          fi
           echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/video.mp4"
