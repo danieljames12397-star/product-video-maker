@@ -2,7 +2,7 @@
 """Build a 1080x1920 product video from photos: slow crossfades, English
 voiceover (Piper), original generated background music. Uses only the given
 product photos."""
-import argparse, os, re, subprocess, sys, textwrap, urllib.request, wave
+import argparse, hashlib, os, random, re, subprocess, sys, textwrap, urllib.request, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -74,15 +74,27 @@ def voice_text(hook, caption):
     return f"{clean(hook).rstrip('.!?')}. {body} Find it at Deco Dwelling."
 
 
-def tts(text, out_wav):
-    model = "en_US-amy-low.onnx"
-    base = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/low/"
-    for f in (model, model + ".json"):
-        if not os.path.exists(f):
-            urllib.request.urlretrieve(base + f, f)
+VOICES = [("en_US", "amy", "low"), ("en_US", "amy", "medium"), ("en_US", "lessac", "medium"),
+          ("en_GB", "alba", "medium"), ("en_GB", "jenny_dioco", "medium")]
+
+
+def tts(text, out_wav, seed=0):
     with open("voice.txt", "w") as fh:
         fh.write(text)
-    sh(["piper", "-m", model, "-i", "voice.txt", "-f", out_wav, "--length-scale", "1.1"])
+    order = VOICES[seed % len(VOICES):] + VOICES[:seed % len(VOICES)]
+    for lang, name, q in order + [VOICES[0]]:
+        model = f"{lang}-{name}-{q}.onnx"
+        base = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/{lang}/{name}/{q}/"
+        try:
+            for f in (model, model + ".json"):
+                if not os.path.exists(f):
+                    urllib.request.urlretrieve(base + f, f)
+            sh(["piper", "-m", model, "-i", "voice.txt", "-f", out_wav, "--length-scale", "1.08"])
+            print("voice:", model)
+            return
+        except Exception as e:
+            print("voice failed", model, e, flush=True)
+    raise SystemExit("no voice worked")
 
 
 def wav_len(p):
@@ -90,7 +102,8 @@ def wav_len(p):
         return w.getnframes() / w.getframerate()
 
 
-def music(dur, out_wav, sr=48000):
+def music(dur, out_wav, sr=48000, seed=0):
+    rng = random.Random(seed)
     n = int(sr * dur); t = np.arange(n) / sr
     mid = lambda m: 440 * 2 ** ((m - 69) / 12)
 
@@ -102,21 +115,40 @@ def music(dur, out_wav, sr=48000):
         if kind == "pad":
             w = np.sin(2*np.pi*f*tt) + .4*np.sin(2*np.pi*2*f*tt) + .2*np.sin(2*np.pi*f*1.003*tt)
             env = np.minimum(tt/.8, 1) * np.minimum((length-tt)/1.2, 1)
+        elif kind == "bell":
+            w = np.sin(2*np.pi*f*tt) + .5*np.sin(2*np.pi*2.76*f*tt) + .25*np.sin(2*np.pi*5.4*f*tt)
+            env = np.exp(-tt*1.6) * np.minimum(tt/.005, 1)
         else:
             w = np.sin(2*np.pi*f*tt) + .3*np.sin(2*np.pi*3*f*tt)
-            env = np.exp(-tt*3.2) * np.minimum(tt/.01, 1)
+            env = np.exp(-tt*decay) * np.minimum(tt/.01, 1)
         w = w * np.clip(env, 0, 1) * amp
         e = min(s+l, n); m[s:e] = w[:e-s]; return m
 
-    chords = [[48,55,59,64],[45,52,60,64],[41,48,57,64],[43,50,59,62]]
-    cl = 5.5; mix = np.zeros(n)
+    progs = [
+        [[48,55,59,64],[45,52,60,64],[41,48,57,64],[43,50,59,62]],
+        [[50,57,62,65],[46,53,60,65],[43,50,58,62],[45,52,60,64]],
+        [[48,55,60,64],[53,57,60,65],[55,59,62,67],[48,55,60,64]],
+        [[45,52,57,60],[41,48,53,60],[48,55,60,64],[43,50,55,59]],
+        [[52,59,64,67],[48,55,60,64],[45,52,57,60],[43,50,55,62]],
+        [[43,50,55,62],[40,47,52,59],[48,55,60,67],[50,57,62,69]],
+    ]
+    shift = rng.choice([-3, -2, 0, 0, 2, 3, 5])
+    chords = [[p + shift for p in c] for c in rng.choice(progs)]
+    arps = [[1,2,3,2,1,3,2,3], [1,3,2,3,1,3,2,1], [3,2,1,2,3,2,1,2], [1,2,3,3,2,1,2,3]]
+    arp_ix = rng.choice(arps)
+    cl = rng.choice([4.4, 5.0, 5.5, 6.2])
+    decay = rng.choice([2.2, 3.2, 4.2])
+    lead = rng.choice(["pluck", "bell"])
+    oct_up = rng.choice([0, 12, 12])
+    pad_amp = rng.choice([.10, .12, .14])
+    mix = np.zeros(n)
     for k, st in enumerate(np.arange(0, dur, cl)):
         ch = chords[k % 4]
-        for p in ch: mix += note(mid(p), st, cl+.8, .12, "pad")
-        arp = [ch[1]+12, ch[2]+12, ch[3]+12, ch[2]+12, ch[1]+12, ch[3]+12, ch[2]+12, ch[3]+12]
-        for j, p in enumerate(arp): mix += note(mid(p), st+j*cl/8, 1.0, .10, "pluck")
+        for p in ch: mix += note(mid(p), st, cl+.8, pad_amp, "pad")
+        arp = [ch[i] + oct_up for i in arp_ix]
+        for j, p in enumerate(arp): mix += note(mid(p), st+j*cl/8, 1.0, .10, lead)
     mix = mix / np.max(np.abs(mix)) * .8
-    d = int(.32*sr); echo = np.zeros(n); echo[d:] = mix[:-d]*.35
+    d = int(rng.choice([.28, .32, .4])*sr); echo = np.zeros(n); echo[d:] = mix[:-d]*.35
     L = mix + echo; R = np.roll(mix, int(.012*sr)) + np.roll(echo, int(.02*sr))
     st = np.stack([L, R], 1); st = st / np.max(np.abs(st)) * .8
     st *= (np.minimum(t/1.5, 1) * np.minimum((dur-t)/2.0, 1))[:, None]
@@ -206,12 +238,14 @@ def main():
         cd = min(probe_dur("work/clip_raw.mp4"), 9.0)
         overlay_png(a.hook, "work/ov.png")
     npho = len(frames); N = npho + (1 if has_clip else 0)
-    tts(voice_text(a.hook, a.caption), "work/vo.wav")
+    seed = int(hashlib.md5((a.hook + a.images[:300]).encode()).hexdigest()[:8], 16)
+    print("audio seed", seed, flush=True)
+    tts(voice_text(a.hook, a.caption), "work/vo.wav", seed)
     vlen = wav_len("work/vo.wav")
     xf = 0.9
     total = max(vlen + 2.5, cd + npho * 3.0 - xf * (N - 1) + 0.5, N * 3.2 - xf * (N - 1))
     seg = (total - cd + xf * (N - 1)) / max(npho, 1) if npho else 0
-    music(total + .5, "work/bg.wav")
+    music(total + .5, "work/bg.wav", seed=seed)
     cmd = ["ffmpeg", "-y", "-v", "error"]
     durs = []
     if has_clip:
