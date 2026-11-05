@@ -1,0 +1,36 @@
+name: Make Etsy listing video
+on:
+  workflow_dispatch:
+    inputs:
+      pid:
+        description: "Etsy listing id (used for the release tag)"
+        required: true
+      images:
+        description: "Photo URLs (space or | separated, first 7 are used)"
+        required: true
+      caption:
+        description: "Caption for the first slide"
+        required: false
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update -y && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Build
+        env:
+          IMAGES: ${{ inputs.images }}
+          CAPTION: ${{ inputs.caption }}
+        run: bash scripts/make_etsy_video.sh
+      - name: Publish to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PID: ${{ inputs.pid }}
+        run: |
+          TAG="e-${PID}"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" video.mp4 --title "Etsy video $PID" --notes "Auto-built Etsy listing video (1440x1080)"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/video.mp4"
