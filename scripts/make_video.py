@@ -162,6 +162,22 @@ def probe_dur(p):
     return float(o.stdout.strip())
 
 
+def motion(i, seg, fps=30):
+    """Slow Ken Burns move on a still: alternates zoom-in, zoom-out, pan left/right."""
+    nf = int(round(seg * fps)) + 3
+    kind = i % 4
+    if kind == 0:    # slow zoom in, centered
+        z, x, y = f"1+0.08*on/{nf}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    elif kind == 1:  # slow zoom out
+        z, x, y = f"1.08-0.08*on/{nf}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    elif kind == 2:  # zoom in drifting to the right
+        z, x, y = f"1.06+0.02*on/{nf}", f"(iw-iw/zoom)*on/{nf}", "ih/2-(ih/zoom/2)"
+    else:            # zoom in drifting to the left
+        z, x, y = f"1.06+0.02*on/{nf}", f"(iw-iw/zoom)*(1-on/{nf})", "ih/2-(ih/zoom/2)"
+    return (f"scale=2160:-2,zoompan=z='{z}':x='{x}':y='{y}':d={nf}:s={W}x{H}:fps={fps},"
+            f"trim=duration={seg:.3f},setpts=PTS-STARTPTS,settb=1/{fps}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--images", default="", help="URLs or paths separated by space/newline/|")
@@ -202,7 +218,7 @@ def main():
         cmd += ["-t", f"{cd:.3f}", "-i", "work/clip_raw.mp4", "-loop", "1", "-t", f"{cd:.3f}", "-i", "work/ov.png"]
         durs.append(cd)
     for fr in frames:
-        cmd += ["-loop", "1", "-t", f"{seg:.3f}", "-i", fr]; durs.append(seg)
+        cmd += ["-i", fr]; durs.append(seg)
     cmd += ["-i", "work/vo.wav", "-i", "work/bg.wav"]
     ai = (2 if has_clip else 0) + npho
     fc = ""; labels = []; k = 0
@@ -215,7 +231,7 @@ def main():
         labels.append("v0"); k = 2
     for i in range(npho):
         j = len(labels)
-        fc += f"[{k+i}:v]fps=30,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{j}];"; labels.append(f"v{j}")
+        fc += f"[{k+i}:v]{motion(i, seg)},format=yuv420p[v{j}];"; labels.append(f"v{j}")
     prev = labels[0]; acc = durs[0]
     for i in range(1, len(labels)):
         off = acc - xf
