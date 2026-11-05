@@ -11,6 +11,9 @@ on:
       caption:
         description: "Caption for the first slide"
         required: false
+  push:
+    paths:
+      - "etsy-jobs/*.json"
 permissions:
   contents: write
 jobs:
@@ -18,17 +21,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Prepare job
+        env:
+          EV: ${{ github.event_name }}
+          IN_PID: ${{ inputs.pid }}
+          IN_IMAGES: ${{ inputs.images }}
+          IN_CAPTION: ${{ inputs.caption }}
+        run: |
+          if [ "$EV" = "push" ]; then
+            F=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'etsy-jobs/*.json' | head -1)
+            echo "job file: $F"
+            python3 - "$F" >> "$GITHUB_ENV" <<'PY'
+          import json, os, sys
+          f = sys.argv[1]
+          d = json.load(open(f))
+          pid = os.path.basename(f).split("-")[0].replace(".json", "")
+          print("PID=" + pid)
+          print("IMAGES=" + str(d.get("images", "")).replace("\n", " "))
+          print("CAPTION=" + str(d.get("caption", "")).replace("\n", " "))
+          PY
+          else
+            echo "PID=$IN_PID" >> "$GITHUB_ENV"
+            echo "IMAGES=$IN_IMAGES" >> "$GITHUB_ENV"
+            echo "CAPTION=$IN_CAPTION" >> "$GITHUB_ENV"
+          fi
       - name: Install tools
         run: sudo apt-get update -y && sudo apt-get install -y ffmpeg fonts-dejavu-core
       - name: Build
-        env:
-          IMAGES: ${{ inputs.images }}
-          CAPTION: ${{ inputs.caption }}
         run: bash scripts/make_etsy_video.sh
       - name: Publish to a release
         env:
           GH_TOKEN: ${{ github.token }}
-          PID: ${{ inputs.pid }}
         run: |
           TAG="e-${PID}"
           gh release delete "$TAG" --yes --cleanup-tag || true
