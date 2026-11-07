@@ -78,7 +78,7 @@ VOICES = [("en_US", "amy", "low"), ("en_US", "amy", "medium"), ("en_US", "lessac
           ("en_GB", "alba", "medium"), ("en_GB", "jenny_dioco", "medium")]
 
 
-def tts(text, out_wav, seed=0):
+def tts(text, out_wav, seed=0, scale=1.08):
     with open("voice.txt", "w") as fh:
         fh.write(text)
     order = VOICES[seed % len(VOICES):] + VOICES[:seed % len(VOICES)]
@@ -89,12 +89,38 @@ def tts(text, out_wav, seed=0):
             for f in (model, model + ".json"):
                 if not os.path.exists(f):
                     urllib.request.urlretrieve(base + f, f)
-            sh(["piper", "-m", model, "-i", "voice.txt", "-f", out_wav, "--length-scale", "1.08"])
+            sh(["piper", "-m", model, "-i", "voice.txt", "-f", out_wav, "--length-scale", str(scale)])
             print("voice:", model)
-            return
+            return model
         except Exception as e:
             print("voice failed", model, e, flush=True)
     raise SystemExit("no voice worked")
+
+
+def fit_voice(text, out_wav, model, target, scale=1.16):
+    """Re-voice sentence by sentence and spread the lines with pauses so the
+    voiceover runs close to `target` seconds instead of ending early."""
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
+    parts = []
+    for i, snt in enumerate(sents):
+        with open("voice.txt", "w") as fh:
+            fh.write(snt)
+        f = f"work/vo_{i}.wav"
+        sh(["piper", "-m", model, "-i", "voice.txt", "-f", f, "--length-scale", str(scale)])
+        parts.append(f)
+    with wave.open(parts[0]) as w:
+        params = w.getparams(); sr = w.getframerate()
+    speech = sum(wav_len(f) for f in parts)
+    gap = (target - speech) / max(len(parts) - 1, 1)
+    gap = min(max(gap, 0.35), 1.8)
+    with wave.open(out_wav, "w") as o:
+        o.setparams(params)
+        for i, f in enumerate(parts):
+            with wave.open(f) as w:
+                o.writeframes(w.readframes(w.getnframes()))
+            if i < len(parts) - 1:
+                o.writeframes(b"\x00" * int(sr * gap) * params.sampwidth * params.nchannels)
+    print(f"voice fitted: speech {speech:.1f}s, gap {gap:.2f}s, total {wav_len(out_wav):.1f}s (target {target:.1f}s)")
 
 
 def wav_len(p):
@@ -240,10 +266,15 @@ def main():
     npho = len(frames); N = npho + (1 if has_clip else 0)
     seed = int(hashlib.md5((a.hook + a.images[:300]).encode()).hexdigest()[:8], 16)
     print("audio seed", seed, flush=True)
-    tts(voice_text(a.hook, a.caption), "work/vo.wav", seed)
+    vtext = voice_text(a.hook, a.caption)
+    model = tts(vtext, "work/vo.wav", seed)
     vlen = wav_len("work/vo.wav")
     xf = 0.9
     total = max(vlen + 2.5, cd + npho * 3.0 - xf * (N - 1) + 0.5, N * 3.2 - xf * (N - 1))
+    target = total - 0.8 - 1.2  # voice starts at 0.8s; leave ~1.2s at the end
+    if vlen < target - 1.0:
+        fit_voice(vtext, "work/vo.wav", model, target)
+        vlen = wav_len("work/vo.wav")
     seg = (total - cd + xf * (N - 1)) / max(npho, 1) if npho else 0
     music(total + .5, "work/bg.wav", seed=seed)
     cmd = ["ffmpeg", "-y", "-v", "error"]
