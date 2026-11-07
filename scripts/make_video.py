@@ -71,7 +71,7 @@ def clean(t):
 def voice_text(hook, caption):
     sents = re.split(r"(?<=[.!?])\s+", clean(caption))
     body = " ".join(sents[:3])
-    return f"{clean(hook).rstrip('.!?')}. {body} Find it at Deco Dwelling."
+    return f"{clean(hook).rstrip('.!?')}. {body} Find it at Deco Dwelling. Tap the link to see the details."
 
 
 VOICES = [("en_US", "amy", "low"), ("en_US", "amy", "medium"), ("en_US", "lessac", "medium"),
@@ -273,8 +273,8 @@ def main():
         prev = f"x{i}"; acc = acc - xf + durs[i]
     fc += (f"[{ai}:a]adelay=800|800,aformat=sample_rates=48000:channel_layouts=stereo,asplit[vo][sc];"
            f"[{ai+1}:a]volume=.55[bg];[bg][sc]sidechaincompress=threshold=.03:ratio=8:attack=20:release=400[duck];"
-           f"[vo][duck]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,"
-           f"atrim=0:{total:.3f}[a]")
+           f"[vo][duck]amix=inputs=2:duration=longest:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,"
+           f"atrim=0:{total:.3f},afade=t=out:st={max(total-1.5,0):.3f}:d=1.5[a]")
     cmd += ["-filter_complex", fc, "-map", f"[{prev}]", "-map", "[a]", "-t", f"{total:.3f}",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart", a.out]
