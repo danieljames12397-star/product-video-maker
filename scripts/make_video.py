@@ -271,7 +271,7 @@ def main():
         off = acc - xf
         fc += f"[{prev}][{labels[i]}]xfade=transition=fade:duration={xf}:offset={off:.3f}[x{i}];"
         prev = f"x{i}"; acc = acc - xf + durs[i]
-    fc += (f"[{ai}:a]adelay=800|800,aformat=sample_rates=48000:channel_layouts=stereo,asplit[vo][sc];"
+    fc += (f"[{ai}:a]adelay=800|800,aformat=sample_rates=48000:channel_layouts=stereo,apad=whole_dur={total+.5:.3f},asplit[vo][sc];"
            f"[{ai+1}:a]volume=.55[bg];[bg][sc]sidechaincompress=threshold=.03:ratio=8:attack=20:release=400[duck];"
            f"[vo][duck]amix=inputs=2:duration=longest:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,"
            f"atrim=0:{total:.3f},afade=t=out:st={max(total-1.5,0):.3f}:d=1.5[a]")
