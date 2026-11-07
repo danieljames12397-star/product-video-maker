@@ -322,10 +322,9 @@ def main():
     for j, (k, i, d) in enumerate(plan):
         src = idx[(k, i)]
         if k == "clip":
-            fc += (f"[{src}:v]fps=30,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={d:.3f},trim=duration={d:.3f},split[c1_{j}][c2_{j}];"
-                   f"[c1_{j}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=40:5[cb{j}];"
-                   f"[c2_{j}]scale={W}:1100:force_original_aspect_ratio=decrease[cf{j}];"
-                   f"[cb{j}][cf{j}]overlay=(W-w)/2:420+(1100-h)/2[cm{j}];")
+            # Clip fills the whole 9:16 screen (scaled up and centre-cropped), no frame.
+            fc += (f"[{src}:v]fps=30,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={d:.3f},trim=duration={d:.3f},"
+                   f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[cm{j}];")
             if j == 0:
                 fc += f"[{ov_in}:v]format=rgba[ov];[cm{j}][ov]overlay=0:0,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{j}];"
             else:
