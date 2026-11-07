@@ -258,45 +258,78 @@ def main():
     for i, s in enumerate(srcs):
         raw = f"work/raw{i}.jpg"; fr = f"work/f{i}.png"
         fetch(s, raw); make_frame(raw, fr, a.hook if (i == 0 and not has_clip) else None); frames.append(fr)
-    cd = 0
+    fd = 0
     if has_clip:
         get_clip(a.clip.strip(), "work/clip_raw.mp4")
-        cd = min(probe_dur("work/clip_raw.mp4"), 9.0)
+        fd = probe_dur("work/clip_raw.mp4")
         overlay_png(a.hook, "work/ov.png")
-    npho = len(frames); N = npho + (1 if has_clip else 0)
+    npho = len(frames)
     seed = int(hashlib.md5((a.hook + a.images[:300]).encode()).hexdigest()[:8], 16)
     print("audio seed", seed, flush=True)
     vtext = voice_text(a.hook, a.caption)
     model = tts(vtext, "work/vo.wav", seed)
     vlen = wav_len("work/vo.wav")
-    xf = 0.9
-    total = max(vlen + 2.5, cd + npho * 3.0 - xf * (N - 1) + 0.5, N * 3.2 - xf * (N - 1))
+
+    # Timeline. With a clip, alternate: clip, photo, clip, photo ... so the
+    # product footage appears all the way through, not only at the start.
+    # Each clip piece is cut from a different part of the uploaded video.
+    if has_clip:
+        xf = 0.6
+        K = max(npho, 1)
+        first_c, clip_c, pho_c = 3.0, 2.2, 2.6
+        plan = []  # (kind, index, base duration)
+        for i in range(K):
+            plan.append(("clip", i, first_c if i == 0 else clip_c))
+            if i < npho:
+                plan.append(("photo", i, pho_c))
+    else:
+        xf = 0.9
+        plan = [("photo", i, 3.2) for i in range(npho)]
+    base = sum(d for _, _, d in plan) - xf * (len(plan) - 1)
+    total = max(base, vlen + 2.5)
+    stretch = (total + xf * (len(plan) - 1)) / sum(d for _, _, d in plan)
+    plan = [(k, i, d * stretch) for k, i, d in plan]
+    total = sum(d for _, _, d in plan) - xf * (len(plan) - 1)
     target = total - 0.8 - 1.2  # voice starts at 0.8s; leave ~1.2s at the end
     if vlen < target - 1.0:
         fit_voice(vtext, "work/vo.wav", model, target)
         vlen = wav_len("work/vo.wav")
-    seg = (total - cd + xf * (N - 1)) / max(npho, 1) if npho else 0
     music(total + .5, "work/bg.wav", seed=seed)
+
+    clips = [(i, d) for k, i, d in plan if k == "clip"]
+    starts = {}
+    for n, (i, d) in enumerate(clips):
+        room = max(fd - d, 0)
+        starts[i] = room * n / max(len(clips) - 1, 1) if len(clips) > 1 else 0
     cmd = ["ffmpeg", "-y", "-v", "error"]
-    durs = []
+    durs = []; idx = {}; n_in = 0
+    for k, i, d in plan:
+        if k == "clip":
+            cmd += ["-ss", f"{starts[i]:.3f}", "-t", f"{d:.3f}", "-i", "work/clip_raw.mp4"]
+        else:
+            cmd += ["-i", frames[i]]
+        idx[(k, i)] = n_in; n_in += 1; durs.append(d)
+    ov_in = None
     if has_clip:
-        cmd += ["-t", f"{cd:.3f}", "-i", "work/clip_raw.mp4", "-loop", "1", "-t", f"{cd:.3f}", "-i", "work/ov.png"]
-        durs.append(cd)
-    for fr in frames:
-        cmd += ["-i", fr]; durs.append(seg)
+        cmd += ["-loop", "1", "-t", f"{plan[0][2]:.3f}", "-i", "work/ov.png"]
+        ov_in = n_in; n_in += 1
     cmd += ["-i", "work/vo.wav", "-i", "work/bg.wav"]
-    ai = (2 if has_clip else 0) + npho
-    fc = ""; labels = []; k = 0
-    if has_clip:
-        fc += (f"[0:v]fps=30,setpts=PTS-STARTPTS,split[c1][c2];"
-               f"[c1]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=40:5[cb];"
-               f"[c2]scale={W}:1100:force_original_aspect_ratio=decrease[cf];"
-               f"[cb][cf]overlay=(W-w)/2:420+(1100-h)/2[cm];"
-               f"[1:v]format=rgba[ov];[cm][ov]overlay=0:0,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v0];")
-        labels.append("v0"); k = 2
-    for i in range(npho):
-        j = len(labels)
-        fc += f"[{k+i}:v]{motion(i, seg)},format=yuv420p[v{j}];"; labels.append(f"v{j}")
+    ai = n_in
+    fc = ""; labels = []
+    for j, (k, i, d) in enumerate(plan):
+        src = idx[(k, i)]
+        if k == "clip":
+            fc += (f"[{src}:v]fps=30,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={d:.3f},trim=duration={d:.3f},split[c1_{j}][c2_{j}];"
+                   f"[c1_{j}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=40:5[cb{j}];"
+                   f"[c2_{j}]scale={W}:1100:force_original_aspect_ratio=decrease[cf{j}];"
+                   f"[cb{j}][cf{j}]overlay=(W-w)/2:420+(1100-h)/2[cm{j}];")
+            if j == 0:
+                fc += f"[{ov_in}:v]format=rgba[ov];[cm{j}][ov]overlay=0:0,settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{j}];"
+            else:
+                fc += f"[cm{j}]settb=1/30,setpts=PTS-STARTPTS,format=yuv420p[v{j}];"
+        else:
+            fc += f"[{src}:v]{motion(i, d)},format=yuv420p[v{j}];"
+        labels.append(f"v{j}")
     prev = labels[0]; acc = durs[0]
     for i in range(1, len(labels)):
         off = acc - xf
