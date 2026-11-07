@@ -275,8 +275,11 @@ def main():
     # Each clip piece is cut from a different part of the uploaded video.
     if has_clip:
         xf = 0.6
+        # Longer pieces so viewers can see what the product does; cap at 5
+        # clip+photo pairs to keep the video around 30 seconds.
+        npho = min(npho, 5); frames = frames[:npho]
         K = max(npho, 1)
-        first_c, clip_c, pho_c = 3.0, 2.2, 2.6
+        first_c, clip_c, pho_c = 4.0, 3.5, 3.0
         plan = []  # (kind, index, base duration)
         for i in range(K):
             plan.append(("clip", i, first_c if i == 0 else clip_c))
