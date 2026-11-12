@@ -275,13 +275,15 @@ def main():
     # Each clip piece is cut from a different part of the uploaded video.
     if has_clip:
         xf = 0.6
-        # The WHOLE uploaded clip is used, start to end: it is split into K
-        # back-to-back pieces with a photo between each, so no footage is
-        # skipped. Pieces are at least ~3 s so each shows the product working.
-        npho = min(npho, 7); frames = frames[:npho]
+        # Short-form rule: the finished video stays around 30-40 s. A short
+        # clip (<= CLIP_BUDGET) is used whole, back to back. A longer clip is
+        # sampled from start to end: K evenly spaced pieces across the whole
+        # clip, so every part of it is represented without a 2-minute video.
+        CLIP_BUDGET, PIECE_MAX = 22.0, 4.5
+        npho = min(npho, 5); frames = frames[:npho]
         K = max(1, min(max(npho, 1), int(fd // 3.0) or 1))
         npho = min(npho, K); frames = frames[:npho]
-        clip_c, pho_c = fd / K, 3.0
+        clip_c, pho_c = min(fd / K, CLIP_BUDGET / K, PIECE_MAX), 3.0
         plan = []  # (kind, index, base duration)
         for i in range(K):
             plan.append(("clip", i, clip_c))
@@ -307,9 +309,11 @@ def main():
 
     clips = [(i, d) for k, i, d in plan if k == "clip"]
     starts = {}
-    pos = 0.0
-    for i, d in clips:  # consecutive pieces: piece n starts where piece n-1 ended
-        starts[i] = min(pos, max(fd - d, 0)); pos += d
+    # Pieces are spread evenly from the very start to the very end of the
+    # clip (back to back when the clip is short enough to use whole).
+    for n, (i, d) in enumerate(clips):
+        room = max(fd - d, 0)
+        starts[i] = room * n / max(len(clips) - 1, 1) if len(clips) > 1 else 0
     cmd = ["ffmpeg", "-y", "-v", "error"]
     durs = []; idx = {}; n_in = 0
     for k, i, d in plan:
