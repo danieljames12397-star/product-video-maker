@@ -275,23 +275,29 @@ def main():
     # Each clip piece is cut from a different part of the uploaded video.
     if has_clip:
         xf = 0.6
-        # Longer pieces so viewers can see what the product does; cap at 5
-        # clip+photo pairs to keep the video around 30 seconds.
-        npho = min(npho, 5); frames = frames[:npho]
-        K = max(npho, 1)
-        first_c, clip_c, pho_c = 4.0, 3.5, 3.0
+        # The WHOLE uploaded clip is used, start to end: it is split into K
+        # back-to-back pieces with a photo between each, so no footage is
+        # skipped. Pieces are at least ~3 s so each shows the product working.
+        npho = min(npho, 7); frames = frames[:npho]
+        K = max(1, min(max(npho, 1), int(fd // 3.0) or 1))
+        npho = min(npho, K); frames = frames[:npho]
+        clip_c, pho_c = fd / K, 3.0
         plan = []  # (kind, index, base duration)
         for i in range(K):
-            plan.append(("clip", i, first_c if i == 0 else clip_c))
+            plan.append(("clip", i, clip_c))
             if i < npho:
                 plan.append(("photo", i, pho_c))
     else:
         xf = 0.9
         plan = [("photo", i, 3.2) for i in range(npho)]
     base = sum(d for _, _, d in plan) - xf * (len(plan) - 1)
-    total = max(base, vlen + 2.5)
-    stretch = (total + xf * (len(plan) - 1)) / sum(d for _, _, d in plan)
-    plan = [(k, i, d * stretch) for k, i, d in plan]
+    need = vlen + 2.5
+    if base < need:
+        # Lengthen only the photos (never stretch the clip past its real end).
+        flex = [d for k, _, d in plan if k == "photo"] or [d for _, _, d in plan]
+        grow = (need - base) / len(flex)
+        plan = [(k, i, d + grow) if (k == "photo" or not any(kk == "photo" for kk, _, _ in plan)) else (k, i, d)
+                for k, i, d in plan]
     total = sum(d for _, _, d in plan) - xf * (len(plan) - 1)
     target = total - 0.8 - 1.2  # voice starts at 0.8s; leave ~1.2s at the end
     if vlen < target - 1.0:
@@ -301,9 +307,9 @@ def main():
 
     clips = [(i, d) for k, i, d in plan if k == "clip"]
     starts = {}
-    for n, (i, d) in enumerate(clips):
-        room = max(fd - d, 0)
-        starts[i] = room * n / max(len(clips) - 1, 1) if len(clips) > 1 else 0
+    pos = 0.0
+    for i, d in clips:  # consecutive pieces: piece n starts where piece n-1 ended
+        starts[i] = min(pos, max(fd - d, 0)); pos += d
     cmd = ["ffmpeg", "-y", "-v", "error"]
     durs = []; idx = {}; n_in = 0
     for k, i, d in plan:
