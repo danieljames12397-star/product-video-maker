@@ -1,0 +1,36 @@
+name: Make voiceover
+on:
+  push:
+    paths:
+      - "tts/in/*.json"
+permissions:
+  contents: write
+concurrency:
+  group: tts
+  cancel-in-progress: false
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Piper
+        run: pip install piper-tts==1.8.0
+      - name: Voice new scripts
+        run: |
+          FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'tts/in/*.json')
+          echo "$FILES"
+          [ -n "$FILES" ] && python tts/make_tts.py $FILES || echo "nothing to voice"
+      - name: Save audio
+        run: |
+          git config user.name "voiceover-bot"
+          git config user.email "voiceover-bot@users.noreply.github.com"
+          git add tts/out
+          git diff --cached --quiet && exit 0
+          git commit -m "Add voiceover audio"
+          git pull --rebase origin main
+          git push origin HEAD:main
