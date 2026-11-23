@@ -40,8 +40,11 @@ def req(method, url, body=None, headers=None, form=None, timeout=120):
         data = urllib.parse.urlencode(form).encode()
         h["Content-Type"] = "application/x-www-form-urlencoded"
     elif body is not None:
-        data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
-        h["Content-Type"] = "application/json"
+        if isinstance(body, bytes):
+            data = body
+        else:
+            data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
+            h["Content-Type"] = "application/json"
     r = urllib.request.Request(url, data=data, headers=h, method=method)
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
