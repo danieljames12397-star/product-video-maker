@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 MAKE = "https://us2.make.com/api/v2"
 ORG, STORE = 9362514, 195844
 PAGE_ID, IG_ID = "1204974132695138", "17841469376262589"
-GRAPH = "https://graph.facebook.com/v21.0"
+GRAPH = "https://graph.facebook.com/v27.0"
 
 MAKE_TOKEN = os.environ.get("MAKE_API_TOKEN", "")
 ZERNIO = os.environ.get("ZERNIO_API_KEY", "")
@@ -215,6 +215,18 @@ def check_keys():
                  {"Authorization": "Bearer " + BUFFER})
     ok = st == 200 and not js.get("errors")
     print("Buffer key:", "OK" if ok else f"FAILED {st} {str(js)[:200]}")
+    if FB:
+        st, me = req("GET", f"{GRAPH}/me?fields=id,name&access_token={FB}")
+        print("FB token is for:", me.get("name"), me.get("id"),
+              "(Deco Dwelling page OK)" if me.get("id") == PAGE_ID else f"(NOT the page! {st} {str(me)[:200]})")
+        st, ig = req("GET", f"{GRAPH}/{IG_ID}?fields=username&access_token={FB}")
+        print("Instagram access:", ig.get("username") or f"FAILED {st} {str(ig)[:200]}")
+        st, dbg = req("GET", f"{GRAPH}/debug_token?input_token={FB}&access_token={FB}")
+        d = dbg.get("data") or {}
+        print("Token expires:", "never" if d.get("expires_at") == 0 else d.get("expires_at"),
+              "| scopes:", ",".join(d.get("scopes") or []))
+    else:
+        print("FB_PAGE_TOKEN not set")
 
 
 def main():
