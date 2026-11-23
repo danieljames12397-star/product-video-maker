@@ -208,7 +208,18 @@ HANDLERS = {
 }
 
 
+def check_keys():
+    st, js = req("GET", "https://zernio.com/api/v1/accounts", headers={"Authorization": "Bearer " + ZERNIO})
+    print("Zernio key:", "OK" if st == 200 else f"FAILED {st} {str(js)[:200]}")
+    st, js = req("POST", "https://api.buffer.com", {"query": "query { account { id } }"},
+                 {"Authorization": "Bearer " + BUFFER})
+    ok = st == 200 and not js.get("errors")
+    print("Buffer key:", "OK" if ok else f"FAILED {st} {str(js)[:200]}")
+
+
 def main():
+    if os.environ.get("CHECK_KEYS") == "1":
+        check_keys()
     if not MAKE_TOKEN:
         print("MAKE_API_TOKEN secret missing - nothing to do.")
         return 0

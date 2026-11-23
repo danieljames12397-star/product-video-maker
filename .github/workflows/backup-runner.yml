@@ -11,6 +11,9 @@ on:
       force:
         description: "1 = run even if Make is active (testing)"
         default: "0"
+      check_keys:
+        description: "1 = test the Zernio and Buffer keys"
+        default: "0"
 concurrency:
   group: backup-runner
   cancel-in-progress: false
@@ -31,4 +34,5 @@ jobs:
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           FORCE: ${{ github.event.inputs.force || '0' }}
+          CHECK_KEYS: ${{ github.event.inputs.check_keys || '0' }}
         run: python scripts/backup_runner.py
